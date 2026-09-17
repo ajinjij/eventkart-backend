@@ -1,0 +1,209 @@
+// Prisma schema for eventkart
+// Run `npx prisma migrate dev --name init` after setting DATABASE_URL in .env
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  CUSTOMER
+  VENDOR
+  ADMIN
+}
+
+enum VendorStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum RequirementStatus {
+  OPEN
+  BOOKED
+  CLOSED
+}
+
+enum QuoteStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentStatus {
+  HELD
+  RELEASED
+  REFUNDED
+}
+
+model User {
+  id            Int            @id @default(autoincrement())
+  name          String
+  email         String         @unique
+  password      String
+  role          Role           @default(CUSTOMER)
+  phone         String?
+  createdAt     DateTime       @default(now())
+
+  vendorProfile VendorProfile?
+  requirements  Requirement[]
+  bookings      Booking[]      @relation("CustomerBookings")
+  reviews       Review[]
+  cart          Cart?
+  wishlist      WishlistItem[]
+}
+
+model VendorProfile {
+  id            Int            @id @default(autoincrement())
+  userId        Int            @unique
+  user          User           @relation(fields: [userId], references: [id])
+  businessName  String
+  category      String         // e.g. "wedding", "corporate", "birthday"
+  city          String
+  description   String?
+  status        VendorStatus   @default(PENDING)
+  rating        Float          @default(0)
+  reviewCount   Int            @default(0)
+  createdAt     DateTime       @default(now())
+
+  packages      Package[]
+  quotes        Quote[]
+  bookings      Booking[]
+}
+
+model Package {
+  id            Int           @id @default(autoincrement())
+  vendorId      Int
+  vendor        VendorProfile @relation(fields: [vendorId], references: [id])
+  name          String
+  description   String?
+  price         Float
+  originalPrice Float?        // set this higher than price to show a strikethrough + discount badge, Flipkart-style
+  imageUrl      String?       // a data URL (base64) for local dev, or a real hosted image URL in production
+  createdAt     DateTime      @default(now())
+
+  cartItems     CartItem[]
+  bookings      Booking[]
+  wishlistedBy  WishlistItem[]
+}
+
+model Requirement {
+  id             Int                @id @default(autoincrement())
+  customerId     Int
+  customer       User               @relation(fields: [customerId], references: [id])
+  eventType      String             // "wedding" | "corporate" | "birthday" | "other"
+  eventDate      DateTime
+  city           String
+  guestCount     Int?
+  budgetMin      Float?
+  budgetMax      Float?
+  servicesNeeded String?            // comma-separated, e.g. "decor,catering,photography"
+  notes          String?
+  status         RequirementStatus  @default(OPEN)
+  createdAt      DateTime           @default(now())
+
+  quotes         Quote[]
+}
+
+model Quote {
+  id            Int         @id @default(autoincrement())
+  requirementId Int
+  requirement   Requirement @relation(fields: [requirementId], references: [id])
+  vendorId      Int
+  vendor        VendorProfile @relation(fields: [vendorId], references: [id])
+  price         Float
+  message       String?
+  status        QuoteStatus @default(PENDING)
+  createdAt     DateTime    @default(now())
+
+  booking       Booking?
+}
+
+model Booking {
+  id               Int           @id @default(autoincrement())
+  // A booking comes from EITHER an accepted custom quote OR a direct package
+  // purchase through the cart (like buying a product on Flipkart). Exactly
+  // one of quoteId / packageId is set, enforced in the route handlers.
+  quoteId          Int?          @unique
+  quote            Quote?        @relation(fields: [quoteId], references: [id])
+  packageId        Int?
+  package          Package?      @relation(fields: [packageId], references: [id])
+  customerId       Int
+  customer         User          @relation("CustomerBookings", fields: [customerId], references: [id])
+  vendorId         Int
+  vendor           VendorProfile @relation(fields: [vendorId], references: [id])
+  totalAmount      Float
+  commissionAmount Float
+  status           BookingStatus @default(PENDING_PAYMENT)
+  eventDate        DateTime?
+  disputeReason    String?
+  createdAt        DateTime      @default(now())
+
+  payment          Payment?
+  review           Review?
+}
+
+model Payment {
+  id          Int           @id @default(autoincrement())
+  bookingId   Int           @unique
+  booking     Booking       @relation(fields: [bookingId], references: [id])
+  amountPaid  Float
+  status      PaymentStatus @default(HELD)
+  paidAt      DateTime      @default(now())
+  releasedAt  DateTime?
+}
+
+model Cart {
+  id         Int        @id @default(autoincrement())
+  customerId Int        @unique
+  customer   User       @relation(fields: [customerId], references: [id])
+  items      CartItem[]
+  createdAt  DateTime   @default(now())
+}
+
+model CartItem {
+  id        Int      @id @default(autoincrement())
+  cartId    Int
+  cart      Cart     @relation(fields: [cartId], references: [id])
+  packageId Int
+  package   Package  @relation(fields: [packageId], references: [id])
+  eventDate DateTime? // when the customer wants this service for their event
+  notes     String?
+  createdAt DateTime @default(now())
+
+  @@unique([cartId, packageId]) // adding the same package twice just isn't meaningful here
+}
+
+model WishlistItem {
+  id         Int      @id @default(autoincrement())
+  customerId Int
+  customer   User     @relation(fields: [customerId], references: [id])
+  packageId  Int
+  package    Package  @relation(fields: [packageId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([customerId, packageId])
+}
+
+model Review {
+  id         Int      @id @default(autoincrement())
+  bookingId  Int      @unique
+  booking    Booking  @relation(fields: [bookingId], references: [id])
+  customerId Int
+  customer   User     @relation(fields: [customerId], references: [id])
+  rating     Int      // 1-5
+  comment    String?
+  createdAt  DateTime @default(now())
+}
