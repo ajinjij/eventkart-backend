@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My packages — eventkart</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header><div class="header-inner" id="site-nav"></div></header>
+
+<section class="page">
+  <div class="wrap">
+    <h1>Vendor dashboard</h1>
+
+    <div id="status-banner"></div>
+
+    <p class="section-label" style="margin-top:24px">Business profile</p>
+    <form id="profile-form" style="max-width:480px;margin-bottom:40px">
+      <div class="field">
+        <label>Business name</label>
+        <input type="text" id="p-name" style="width:100%">
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <select id="p-category" style="width:100%">
+          <option value="wedding">Wedding</option>
+          <option value="corporate">Corporate</option>
+          <option value="birthday">Birthday</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>City</label>
+        <input type="text" id="p-city" style="width:100%">
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="p-description" rows="3"></textarea>
+      </div>
+      <button class="btn btn-fill" type="submit">Save profile</button>
+      <span class="success-msg" id="profile-saved"></span>
+    </form>
+
+    <p class="section-label">Add a new package</p>
+    <form id="package-form" style="max-width:480px;margin-bottom:40px">
+      <div class="field">
+        <label>Package name</label>
+        <input type="text" id="pkg-name" placeholder="e.g. Signature package" required style="width:100%">
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <textarea id="pkg-description" rows="2" placeholder="What's included"></textarea>
+      </div>
+      <div class="field">
+        <label>Price (₹)</label>
+        <input type="number" id="pkg-price" required style="width:100%">
+      </div>
+      <div class="field">
+        <label>Original price (₹) — optional, shows a strikethrough discount</label>
+        <input type="number" id="pkg-original-price" style="width:100%" placeholder="Leave blank if there's no discount">
+      </div>
+      <div class="field">
+        <label>Photo (optional)</label>
+        <input type="file" id="pkg-image" accept="image/*">
+      </div>
+      <button class="btn btn-fill" type="submit">Add package</button>
+      <div class="error-msg" id="package-error"></div>
+    </form>
+
+    <p class="section-label">Your packages</p>
+    <div class="grid" id="packages-grid"></div>
+
+    <p class="section-label" style="margin-top:40px">Recent bookings</p>
+    <div id="bookings-list"></div>
+  </div>
+</section>
+
+<script src="assets/api.js"></script>
+<script>
+  requireRole("VENDOR");
+  renderNav("vendor");
+
+  let pendingImageDataUrl = null;
+
+  document.getElementById("pkg-image").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) { pendingImageDataUrl = null; return; }
+    const reader = new FileReader();
+    reader.onload = () => { pendingImageDataUrl = reader.result; };
+    reader.readAsDataURL(file);
+  });
+
+  async function loadProfile() {
+    const vendor = await apiFetch("/vendors/me/profile");
+    document.getElementById("p-name").value = vendor.businessName || "";
+    document.getElementById("p-category").value = vendor.category || "other";
+    document.getElementById("p-city").value = vendor.city || "";
+    document.getElementById("p-description").value = vendor.description || "";
+
+    const banner = document.getElementById("status-banner");
+    if (vendor.status === "PENDING") {
+      banner.innerHTML = `<div class="badge pending">Pending approval</div><p style="margin-top:8px;color:var(--ink-soft);font-size:13px">Your account is awaiting admin approval. You can still add packages now — they'll go live to customers once you're approved.</p>`;
+    } else if (vendor.status === "REJECTED") {
+      banner.innerHTML = `<div class="badge cancelled">Not approved</div>`;
+    } else {
+      banner.innerHTML = `<div class="badge confirmed">Approved · ★ ${vendor.rating.toFixed(1)} (${vendor.reviewCount} reviews)</div>`;
+    }
+    renderPackages(vendor.packages, vendor.category);
+  }
+
+  function renderPackages(packages, category) {
+    const grid = document.getElementById("packages-grid");
+    if (!packages.length) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No packages yet — add your first one above.</div>`;
+      return;
+    }
+    grid.innerHTML = packages.map(pkg => `
+      <div class="card">
+        <div class="card-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(category)}</div>
+        <div class="card-body">
+          <h4>${pkg.name}</h4>
+          <div class="desc">${pkg.description || ""}</div>
+          ${priceRowHtml(pkg)}
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-sm" style="flex:1" onclick="editPrice(${pkg.id}, ${pkg.price}, ${pkg.originalPrice || 0})">Edit price</button>
+            <button class="btn btn-sm btn-outline-danger" style="flex:1" onclick="deletePackage(${pkg.id})">Delete</button>
+          </div>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  async function editPrice(packageId, currentPrice, currentOriginal) {
+    const newPrice = prompt("New price (₹):", currentPrice);
+    if (newPrice === null) return;
+    const newOriginal = prompt("Original price (₹) — leave as 0 for no discount:", currentOriginal || 0);
+    if (newOriginal === null) return;
+    try {
+      await apiFetch(`/vendors/me/packages/${packageId}`, {
+        method: "PUT",
+        body: JSON.stringify({ price: Number(newPrice), originalPrice: Number(newOriginal) || null }),
+      });
+      loadProfile();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function deletePackage(packageId) {
+    if (!confirm("Remove this package? Customers won't be able to book it anymore.")) return;
+    try {
+      await apiFetch(`/vendors/me/packages/${packageId}`, { method: "DELETE" });
+      loadProfile();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  document.getElementById("profile-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await apiFetch("/vendors/me", {
+        method: "PUT",
+        body: JSON.stringify({
+          businessName: document.getElementById("p-name").value,
+          category: document.getElementById("p-category").value,
+          city: document.getElementById("p-city").value,
+          description: document.getElementById("p-description").value,
+        }),
+      });
+      document.getElementById("profile-saved").textContent = "Saved ✓";
+      setTimeout(() => (document.getElementById("profile-saved").textContent = ""), 2000);
+    } catch (err) {
+      alert(err.message);
+    }
+  });
+
+  document.getElementById("package-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const errEl = document.getElementById("package-error");
+    errEl.textContent = "";
+    try {
+      const originalPriceVal = document.getElementById("pkg-original-price").value;
+      await apiFetch("/vendors/me/packages", {
+        method: "POST",
+        body: JSON.stringify({
+          name: document.getElementById("pkg-name").value,
+          description: document.getElementById("pkg-description").value,
+          price: Number(document.getElementById("pkg-price").value),
+          originalPrice: originalPriceVal ? Number(originalPriceVal) : null,
+          imageUrl: pendingImageDataUrl,
+        }),
+      });
+      e.target.reset();
+      pendingImageDataUrl = null;
+      loadProfile();
+    } catch (err) {
+      errEl.textContent = err.message;
+    }
+  });
+
+  async function loadBookings() {
+    const bookings = await apiFetch("/bookings/mine");
+    const list = document.getElementById("bookings-list");
+    if (!bookings.length) {
+      list.innerHTML = `<div class="empty-state">No bookings yet.</div>`;
+      return;
+    }
+    list.innerHTML = bookings.map(b => `
+      <div class="list-item">
+        <div class="info">
+          <h4>Booking #${b.id}</h4>
+          <p>${formatMoney(b.totalAmount)} total ${b.eventDate ? "· " + new Date(b.eventDate).toLocaleDateString() : ""}</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="badge ${b.status.toLowerCase().replace('_payment','')}">${b.status.replace("_", " ")}</span>
+          ${b.status === "CONFIRMED" ? `<button class="btn btn-sm" onclick="markComplete(${b.id})">Mark event complete</button>` : ""}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  async function markComplete(bookingId) {
+    if (!confirm("Mark this event as delivered? This lets the platform release your payout.")) return;
+    try {
+      await apiFetch(`/bookings/${bookingId}/complete`, { method: "POST" });
+      loadBookings();
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  loadProfile();
+  loadBookings();
+</script>
+</body>
+</html>

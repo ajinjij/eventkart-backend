@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Package details — eventkart</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .detail-layout{display:grid;grid-template-columns:420px 1fr;gap:32px;align-items:start}
+  .detail-img{border-radius:14px;overflow:hidden;background:var(--gold-tint);height:380px;display:flex;align-items:center;justify-content:center;font-size:64px}
+  .detail-img img{width:100%;height:100%;object-fit:cover}
+  .vendor-line{font-size:14px;color:var(--ink-soft);margin:6px 0 10px}
+  .detail-desc{font-size:14.5px;color:var(--ink-soft);margin:16px 0;line-height:1.7}
+  .review-item{border-bottom:1px solid var(--line);padding:14px 0}
+  .review-item:last-child{border-bottom:none}
+  .review-item .stars{color:var(--gold-dark);font-size:13px;margin-bottom:4px}
+  .review-item .who{font-size:12px;color:var(--ink-soft)}
+  @media(max-width:800px){.detail-layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<header><div class="header-inner" id="site-nav"></div></header>
+
+<div class="wrap page">
+  <div id="package-detail"></div>
+
+  <div id="reviews-section" style="margin-top:40px"></div>
+
+  <div style="margin-top:48px">
+    <p class="section-label">You might also like</p>
+    <div class="grid" id="suggestions-grid"></div>
+  </div>
+</div>
+
+<footer>eventkart · connecting customers with trusted event coordinators</footer>
+
+<script src="assets/api.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  const packageId = params.get("id");
+
+  if (!packageId) {
+    document.getElementById("package-detail").innerHTML = `<div class="empty-state">No package specified. <a href="index.html" style="color:var(--navy)">Go back to browsing →</a></div>`;
+  } else {
+    loadPackage();
+  }
+
+  async function loadPackage() {
+    let pkg;
+    try {
+      pkg = await apiFetch(`/packages/${packageId}`);
+    } catch (err) {
+      document.getElementById("package-detail").innerHTML = `<div class="empty-state">${err.message}</div>`;
+      return;
+    }
+
+    let inWishlist = false;
+    const user = getUser();
+    if (user && user.role === "CUSTOMER") {
+      try {
+        const wishlist = await apiFetch("/wishlist");
+        inWishlist = wishlist.some(w => w.packageId === pkg.id);
+      } catch (e) { /* ignore */ }
+    }
+
+    document.getElementById("package-detail").innerHTML = `
+      <div class="detail-layout">
+        <div class="detail-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(pkg.vendor.category)}</div>
+        <div>
+          <div class="cat" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-soft);font-weight:500">${pkg.vendor.category}</div>
+          <h1 style="margin:6px 0">${pkg.name}</h1>
+          <div class="vendor-line">by <strong>${pkg.vendor.businessName}</strong> · ${pkg.vendor.city}</div>
+          <span class="rating-badge">★ ${pkg.vendor.rating.toFixed(1)} (${pkg.vendor.reviewCount} reviews)</span>
+          ${priceRowHtml(pkg)}
+          <p class="detail-desc">${pkg.description || "No description provided by this vendor yet."}</p>
+          <div style="display:flex;gap:10px;max-width:420px">
+            <button class="btn btn-fill" style="flex:1" onclick="addToCart(${pkg.id}, this)">Add to cart</button>
+            <div class="wishlist-heart ${inWishlist ? "active" : ""}" style="position:static;width:44px;height:44px;font-size:18px" onclick="toggleWishlist(${pkg.id}, this)">♥</div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    loadReviews(pkg.vendorId);
+    loadSuggestions();
+  }
+
+  async function loadReviews(vendorId) {
+    const reviews = await apiFetch(`/reviews/vendor/${vendorId}`);
+    const el = document.getElementById("reviews-section");
+    if (!reviews.length) {
+      el.innerHTML = `<p class="section-label">Reviews</p><div class="empty-state">No reviews yet for this vendor.</div>`;
+      return;
+    }
+    el.innerHTML = `
+      <p class="section-label">Reviews (${reviews.length})</p>
+      <div class="card" style="padding:8px 20px">
+        ${reviews.map(r => `
+          <div class="review-item">
+            <div class="stars">${"★".repeat(r.rating)}${"☆".repeat(5 - r.rating)}</div>
+            <p>${r.comment || ""}</p>
+            <div class="who">${r.customer.name}</div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  async function loadSuggestions() {
+    const suggestions = await apiFetch(`/packages/${packageId}/suggestions`);
+    const grid = document.getElementById("suggestions-grid");
+    if (!suggestions.length) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No similar packages to suggest right now.</div>`;
+      return;
+    }
+    grid.innerHTML = suggestions.map(pkg => `
+      <div class="card" style="cursor:pointer" onclick="window.location.href='package.html?id=${pkg.id}'">
+        <div class="card-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(pkg.vendor.category)}</div>
+        <div class="card-body">
+          <div class="cat">${pkg.vendor.category} · ${pkg.vendor.city}</div>
+          <h4>${pkg.name}</h4>
+          <span class="rating-badge">★ ${pkg.vendor.rating.toFixed(1)}</span>
+          ${priceRowHtml(pkg)}
+        </div>
+      </div>
+    `).join("");
+  }
+
+  async function addToCart(pkgId, btn) {
+    const user = getUser();
+    if (!user) { window.location.href = "auth.html"; return; }
+    if (user.role !== "CUSTOMER") { alert("Only customer accounts can add packages to a cart."); return; }
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = "Adding…";
+    try {
+      await apiFetch("/cart/items", { method: "POST", body: JSON.stringify({ packageId: pkgId }) });
+      btn.textContent = "Added ✓";
+      renderNav();
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      alert(err.message);
+    }
+  }
+
+  renderNav();
+</script>
+</body>
+</html>

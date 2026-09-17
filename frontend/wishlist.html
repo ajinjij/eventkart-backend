@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wishlist — eventkart</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header><div class="header-inner" id="site-nav"></div></header>
+
+<div class="wrap page">
+  <h1>My Wishlist</h1>
+  <div class="grid" id="wishlist-grid"></div>
+</div>
+
+<footer>eventkart · connecting customers with trusted event coordinators</footer>
+
+<script src="assets/api.js"></script>
+<script>
+  requireRole("CUSTOMER");
+  renderNav("wishlist");
+
+  async function loadWishlist() {
+    const items = await apiFetch("/wishlist");
+    const grid = document.getElementById("wishlist-grid");
+
+    if (!items.length) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">Your wishlist is empty. <a href="index.html" style="color:var(--fk-blue)">Browse packages →</a></div>`;
+      return;
+    }
+
+    grid.innerHTML = items.map(item => {
+      const pkg = item.package;
+      return `
+      <div class="card" style="cursor:pointer" onclick="window.location.href='package.html?id=${pkg.id}'">
+        <div class="wishlist-heart active" onclick="event.stopPropagation(); removeFromWishlist(${pkg.id})">♥</div>
+        <div class="card-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(pkg.vendor.category)}</div>
+        <div class="card-body">
+          <div class="cat">${pkg.vendor.category} · ${pkg.vendor.city}</div>
+          <h4>${pkg.name}</h4>
+          <span class="rating-badge">★ ${pkg.vendor.rating.toFixed(1)}</span>
+          ${priceRowHtml(pkg)}
+          <div class="desc">${pkg.description || pkg.vendor.businessName}</div>
+          <button class="btn btn-fill" style="width:100%" onclick="event.stopPropagation(); moveToCart(${pkg.id})">Add to cart</button>
+        </div>
+      </div>
+    `;
+    }).join("");
+  }
+
+  async function removeFromWishlist(packageId) {
+    try {
+      await apiFetch(`/wishlist/${packageId}`, { method: "DELETE" });
+      loadWishlist();
+      renderNav("wishlist");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  async function moveToCart(packageId) {
+    try {
+      await apiFetch("/cart/items", { method: "POST", body: JSON.stringify({ packageId }) });
+      alert("Added to cart");
+      renderNav("wishlist");
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  loadWishlist();
+</script>
+</body>
+</html>

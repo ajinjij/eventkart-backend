@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>eventkart — find and book event coordinators</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<header><div class="header-inner" id="site-nav"></div></header>
+<div class="category-strip">
+  <div class="wrap" id="category-strip-links"></div>
+</div>
+
+<div class="wrap page">
+
+  <div class="banner">
+    <div>
+      <h2>Plan the day. Skip the guesswork.</h2>
+      <p>Compare verified event coordinators and book securely — payment held in escrow until your event is delivered.</p>
+    </div>
+    <div class="search-bar" style="background:rgba(255,255,255,.15);margin:0">
+      <input type="text" id="search-input" placeholder="Search packages, e.g. 'wedding decor'" style="min-width:220px">
+      <input type="text" id="city-input" placeholder="City">
+      <button class="btn btn-fill" onclick="runSearch()">Search</button>
+    </div>
+  </div>
+
+  <div class="shop-layout">
+    <aside class="filters-panel">
+      <h4>Filters</h4>
+
+      <div class="filter-group">
+        <div class="group-title">Category</div>
+        <label class="filter-option"><input type="radio" name="cat" onclick="setCategory('')" checked> All</label>
+        <label class="filter-option"><input type="radio" name="cat" onclick="setCategory('wedding')"> Wedding</label>
+        <label class="filter-option"><input type="radio" name="cat" onclick="setCategory('corporate')"> Corporate</label>
+        <label class="filter-option"><input type="radio" name="cat" onclick="setCategory('birthday')"> Birthday</label>
+      </div>
+
+      <div class="filter-group">
+        <div class="group-title">Price range</div>
+        <label class="filter-option"><input type="radio" name="price" onclick="setPrice(0,0)" checked> Any price</label>
+        <label class="filter-option"><input type="radio" name="price" onclick="setPrice(0,50000)"> Under ₹50,000</label>
+        <label class="filter-option"><input type="radio" name="price" onclick="setPrice(50000,200000)"> ₹50,000 – ₹2,00,000</label>
+        <label class="filter-option"><input type="radio" name="price" onclick="setPrice(200000,0)"> Above ₹2,00,000</label>
+      </div>
+
+      <div class="filter-group">
+        <div class="group-title">Customer rating</div>
+        <label class="filter-option"><input type="radio" name="rating" onclick="setRating(0)" checked> All ratings</label>
+        <label class="filter-option"><input type="radio" name="rating" onclick="setRating(4)"> ★ 4 & above</label>
+        <label class="filter-option"><input type="radio" name="rating" onclick="setRating(4.5)"> ★ 4.5 & above</label>
+      </div>
+    </aside>
+
+    <div>
+      <div class="results-toolbar">
+        <span id="results-label">Loading packages…</span>
+        <select id="sort-select" onchange="runSearch()">
+          <option value="newest">Sort: Newest</option>
+          <option value="price_asc">Price: Low to High</option>
+          <option value="price_desc">Price: High to Low</option>
+          <option value="rating">Customer rating</option>
+        </select>
+      </div>
+      <div class="grid" id="results-grid"></div>
+    </div>
+  </div>
+
+  <div id="recommended-section" style="margin-top:48px"></div>
+</div>
+
+<footer>eventkart · connecting customers with trusted event coordinators</footer>
+
+<script src="assets/api.js"></script>
+<script>
+  document.getElementById("category-strip-links").innerHTML = `
+    <a href="#" onclick="setCategory('wedding');return false">${categoryIconSvg('wedding')} Weddings</a>
+    <a href="#" onclick="setCategory('corporate');return false">${categoryIconSvg('corporate')} Corporate events</a>
+    <a href="#" onclick="setCategory('birthday');return false">${categoryIconSvg('birthday')} Birthday parties</a>
+    <a href="#" onclick="setCategory('');return false">All categories</a>
+    <a href="wishlist.html">Wishlist</a>
+    <a href="bookings.html">My Orders</a>
+  `;
+
+  let activeCategory = "";
+  let priceMin = 0, priceMax = 0;
+  let minRating = 0;
+
+  async function renderResults(packages) {
+    const grid = document.getElementById("results-grid");
+    const label = document.getElementById("results-label");
+    label.textContent = packages.length
+      ? `${packages.length} result${packages.length === 1 ? "" : "s"}`
+      : "";
+
+    if (packages.length === 0) {
+      grid.innerHTML = `<div class="empty-state" style="grid-column:1/-1">No packages match these filters. Try widening your search.</div>`;
+      return;
+    }
+
+    let wishlistIds = new Set();
+    const user = getUser();
+    if (user && user.role === "CUSTOMER") {
+      try {
+        const wishlist = await apiFetch("/wishlist");
+        wishlistIds = new Set(wishlist.map(w => w.packageId));
+      } catch (e) { /* ignore */ }
+    }
+
+    grid.innerHTML = packages.map(pkg => `
+      <div class="card" style="cursor:pointer" onclick="window.location.href='package.html?id=${pkg.id}'">
+        <div class="wishlist-heart ${wishlistIds.has(pkg.id) ? "active" : ""}" onclick="event.stopPropagation(); toggleWishlist(${pkg.id}, this)">♥</div>
+        <div class="card-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(pkg.vendor.category)}</div>
+        <div class="card-body">
+          <div class="cat">${pkg.vendor.category} · ${pkg.vendor.city}</div>
+          <h4>${pkg.name}</h4>
+          <span class="rating-badge">★ ${pkg.vendor.rating.toFixed(1)}</span>
+          ${priceRowHtml(pkg)}
+          <div class="desc">${pkg.description || pkg.vendor.businessName}</div>
+          <button class="btn btn-fill" style="width:100%" onclick="event.stopPropagation(); addToCart(${pkg.id}, this)">Add to cart</button>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  async function runSearch() {
+    const search = document.getElementById("search-input").value.trim();
+    const city = document.getElementById("city-input").value.trim();
+    const sort = document.getElementById("sort-select").value;
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (city) params.set("city", city);
+    if (activeCategory) params.set("category", activeCategory);
+    if (priceMin) params.set("minPrice", priceMin);
+    if (priceMax) params.set("maxPrice", priceMax);
+    if (minRating) params.set("minRating", minRating);
+    params.set("sort", sort);
+
+    document.getElementById("results-label").textContent = "Searching…";
+    try {
+      const packages = await apiFetch(`/packages?${params.toString()}`);
+      renderResults(packages);
+    } catch (err) {
+      document.getElementById("results-label").textContent = err.message;
+    }
+  }
+
+  function setCategory(cat) { activeCategory = cat; runSearch(); }
+  function setPrice(min, max) { priceMin = min; priceMax = max; runSearch(); }
+  function setRating(r) { minRating = r; runSearch(); }
+
+  async function addToCart(packageId, btn) {
+    const user = getUser();
+    if (!user) { window.location.href = "auth.html"; return; }
+    if (user.role !== "CUSTOMER") { alert("Only customer accounts can add packages to a cart."); return; }
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = "Adding…";
+    try {
+      await apiFetch("/cart/items", { method: "POST", body: JSON.stringify({ packageId }) });
+      btn.textContent = "Added ✓";
+      renderNav("browse");
+    } catch (err) {
+      btn.disabled = false;
+      btn.textContent = originalText;
+      alert(err.message);
+    }
+  }
+
+  // Pre-fill search box if arriving from a header search on another page
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("search")) document.getElementById("search-input").value = urlParams.get("search");
+
+  renderNav("browse");
+  runSearch();
+  loadRecommended();
+
+  async function loadRecommended() {
+    const section = document.getElementById("recommended-section");
+    let recommended = [];
+    let heading = "Popular right now";
+
+    // If the person has items in their wishlist, personalize by their most-viewed category.
+    const user = getUser();
+    if (user && user.role === "CUSTOMER") {
+      try {
+        const wishlist = await apiFetch("/wishlist");
+        if (wishlist.length) {
+          const topCategory = wishlist[0].package.vendor.category;
+          recommended = await apiFetch(`/packages?category=${topCategory}&sort=rating`);
+          heading = "Recommended for you";
+        }
+      } catch (e) { /* not logged in or no wishlist yet, fall through to popular */ }
+    }
+
+    if (!recommended.length) {
+      recommended = await apiFetch("/packages?sort=rating");
+    }
+    recommended = recommended.slice(0, 4);
+
+    if (!recommended.length) { section.innerHTML = ""; return; }
+
+    section.innerHTML = `
+      <p class="section-label">${heading}</p>
+      <div class="grid">
+        ${recommended.map(pkg => `
+          <div class="card" style="cursor:pointer" onclick="window.location.href='package.html?id=${pkg.id}'">
+            <div class="card-img">${pkg.imageUrl ? `<img src="${pkg.imageUrl}" alt="${pkg.name}">` : categoryIconSvg(pkg.vendor.category)}</div>
+            <div class="card-body">
+              <div class="cat">${pkg.vendor.category} · ${pkg.vendor.city}</div>
+              <h4>${pkg.name}</h4>
+              <span class="rating-badge">★ ${pkg.vendor.rating.toFixed(1)}</span>
+              ${priceRowHtml(pkg)}
+            </div>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+</script>
+</body>
+</html>
