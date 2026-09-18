@@ -80,8 +80,10 @@ model VendorProfile {
   userId        Int            @unique
   user          User           @relation(fields: [userId], references: [id])
   businessName  String
-  category      String         // e.g. "wedding", "corporate", "birthday"
+  category      String         // e.g. "event", "birthday", "photography" — see CATEGORIES in assets/api.js
   city          String
+  district      String?        // Kerala district, for the location filter (e.g. "Ernakulam")
+  pincode       String?        // postal code, for finer-grained location search
   description   String?
   status        VendorStatus   @default(PENDING)
   rating        Float          @default(0)

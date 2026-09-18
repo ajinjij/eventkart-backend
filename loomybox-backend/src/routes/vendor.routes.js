@@ -4,15 +4,17 @@ const { requireAuth, requireRole } = require("../middleware/auth");
 
 const router = express.Router();
 
-// GET /api/vendors?category=wedding&city=Mumbai
+// GET /api/vendors?category=wedding&city=Mumbai&district=Ernakulam&pincode=682001
 // Public: browse approved vendors, optionally filtered.
 router.get("/", async (req, res) => {
-  const { category, city } = req.query;
+  const { category, city, district, pincode } = req.query;
   const vendors = await prisma.vendorProfile.findMany({
     where: {
       status: "APPROVED",
       ...(category ? { category: String(category) } : {}),
       ...(city ? { city: String(city) } : {}),
+      ...(district ? { district: String(district) } : {}),
+      ...(pincode ? { pincode: { startsWith: String(pincode) } } : {}),
     },
     include: { packages: true },
     orderBy: { rating: "desc" },
@@ -34,12 +36,12 @@ router.get("/:id", async (req, res) => {
 });
 
 // PUT /api/vendors/me
-// Vendor: update their own profile (business name, category, city, description).
+// Vendor: update their own profile (business name, category, city, district, pincode, description).
 router.put("/me", requireAuth, requireRole("VENDOR"), async (req, res) => {
-  const { businessName, category, city, description } = req.body;
+  const { businessName, category, city, district, pincode, description } = req.body;
   const vendor = await prisma.vendorProfile.update({
     where: { userId: req.user.id },
-    data: { businessName, category, city, description },
+    data: { businessName, category, city, district, pincode, description },
   });
   res.json(vendor);
 });

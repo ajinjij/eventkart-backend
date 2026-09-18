@@ -3,11 +3,11 @@ const prisma = require("../lib/prisma");
 
 const router = express.Router();
 
-// GET /api/packages?search=wedding&category=wedding&city=Mumbai&minPrice=&maxPrice=&minRating=&sort=price_asc|price_desc|rating|newest
+// GET /api/packages?search=wedding&category=wedding&city=Mumbai&district=Ernakulam&pincode=682001&minPrice=&maxPrice=&minRating=&sort=price_asc|price_desc|rating|newest
 // Public: the main search endpoint the homepage search bar and browse/filter page use.
 // Only returns packages from approved vendors.
 router.get("/", async (req, res) => {
-  const { search, category, city, minPrice, maxPrice, minRating, sort } = req.query;
+  const { search, category, city, district, pincode, minPrice, maxPrice, minRating, sort } = req.query;
 
   const orderBy =
     sort === "price_asc" ? { price: "asc" } :
@@ -21,6 +21,8 @@ router.get("/", async (req, res) => {
         status: "APPROVED",
         ...(category ? { category: String(category) } : {}),
         ...(city ? { city: { contains: String(city) } } : {}),
+        ...(district ? { district: String(district) } : {}),
+        ...(pincode ? { pincode: { startsWith: String(pincode) } } : {}),
         ...(minRating ? { rating: { gte: Number(minRating) } } : {}),
       },
       ...(search
