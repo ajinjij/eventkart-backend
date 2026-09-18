@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { validateCoupon } = require("../lib/coupon");
 
 const router = express.Router();
 const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.12);
@@ -93,24 +94,68 @@ router.delete("/items/:itemId", async (req, res) => {
   res.status(204).send();
 });
 
+// POST /api/cart/preview-coupon
+// Body: { code }. Validates a coupon against the current cart subtotal
+// without redeeming it, so the cart page can show "You saved ₹X" before checkout.
+router.post("/preview-coupon", async (req, res) => {
+  const { code } = req.body;
+  if (!code) return res.status(400).json({ error: "code is required" });
+
+  const cart = await getOrCreateCart(req.user.id);
+  const subtotal = cart.items.reduce((sum, i) => sum + i.package.price, 0);
+
+  try {
+    const { discountAmount } = await validateCoupon(code, subtotal);
+    res.json({ valid: true, code: code.toUpperCase(), discountAmount, subtotal });
+  } catch (err) {
+    res.status(400).json({ valid: false, error: err.message });
+  }
+});
+
 // POST /api/cart/checkout
 // Turns every item in the cart into a booking and captures payment for all of
 // them in one go - the "Buy Now" moment. In production, swap the payment
 // capture block for a real gateway call and only mark bookings CONFIRMED
 // once the gateway confirms the charge.
+// Body: { couponCode?, paymentPlan? } - paymentPlan is "FULL" (default) or "SPLIT" (50% now, 50% before the event).
 router.post("/checkout", async (req, res) => {
+  const { couponCode, paymentPlan } = req.body;
+  const plan = paymentPlan === "SPLIT" ? "SPLIT" : "FULL";
+
   const cart = await getOrCreateCart(req.user.id);
   if (cart.items.length === 0) {
     return res.status(400).json({ error: "Your cart is empty" });
   }
 
+  const subtotal = cart.items.reduce((sum, i) => sum + i.package.price, 0);
+
+  let discountAmount = 0;
+  let appliedCoupon = null;
+  if (couponCode) {
+    try {
+      const result = await validateCoupon(couponCode, subtotal);
+      discountAmount = result.discountAmount;
+      appliedCoupon = result.coupon;
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+  }
+
   const createdBookings = [];
   let grandTotal = 0;
+  let grandPaidNow = 0;
 
   await prisma.$transaction(async (tx) => {
     for (const item of cart.items) {
-      const commissionAmount = Number((item.package.price * COMMISSION_RATE).toFixed(2));
-      const totalAmount = Number((item.package.price + commissionAmount).toFixed(2));
+      // Spread the coupon's discount across items proportionally to their share of the cart.
+      const itemShare = subtotal > 0 ? item.package.price / subtotal : 0;
+      const itemDiscount = Number((discountAmount * itemShare).toFixed(2));
+      const discountedPrice = Math.max(0, item.package.price - itemDiscount);
+
+      const commissionAmount = Number((discountedPrice * COMMISSION_RATE).toFixed(2));
+      const totalAmount = Number((discountedPrice + commissionAmount).toFixed(2));
+      const paidNow = plan === "SPLIT" ? Number((totalAmount / 2).toFixed(2)) : totalAmount;
+      const balanceDue = Number((totalAmount - paidNow).toFixed(2));
 
       const booking = await tx.booking.create({
         data: {
@@ -121,14 +166,23 @@ router.post("/checkout", async (req, res) => {
           commissionAmount,
           eventDate: item.eventDate,
           status: "CONFIRMED", // paid immediately, see note above about real gateways
+          couponCode: appliedCoupon ? appliedCoupon.code : null,
+          discountAmount: itemDiscount,
+          paymentPlan: plan,
+          balanceDue,
         },
       });
       await tx.payment.create({
-        data: { bookingId: booking.id, amountPaid: totalAmount, status: "HELD" },
+        data: { bookingId: booking.id, amountPaid: paidNow, status: "HELD" },
       });
 
       createdBookings.push(booking);
       grandTotal += totalAmount;
+      grandPaidNow += paidNow;
+    }
+
+    if (appliedCoupon) {
+      await tx.coupon.update({ where: { id: appliedCoupon.id }, data: { usedCount: { increment: 1 } } });
     }
 
     // Empty the cart now that everything in it has become a real booking.
@@ -137,7 +191,10 @@ router.post("/checkout", async (req, res) => {
 
   res.status(201).json({
     message: `${createdBookings.length} booking(s) confirmed`,
-    totalPaid: Number(grandTotal.toFixed(2)),
+    totalAmount: Number(grandTotal.toFixed(2)),
+    totalPaid: Number(grandPaidNow.toFixed(2)),
+    discountAmount,
+    paymentPlan: plan,
     bookings: createdBookings,
   });
 });

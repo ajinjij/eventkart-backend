@@ -75,4 +75,28 @@ router.post("/:id/dispute", requireAuth, async (req, res) => {
   res.json(updated);
 });
 
+// POST /api/bookings/:id/pay-balance
+// Customer: pay off the remaining balance on a SPLIT-payment booking.
+router.post("/:id/pay-balance", requireAuth, requireRole("CUSTOMER"), async (req, res) => {
+  const booking = await prisma.booking.findUnique({
+    where: { id: Number(req.params.id) },
+    include: { payment: true },
+  });
+  if (!booking || booking.customerId !== req.user.id) {
+    return res.status(404).json({ error: "Booking not found" });
+  }
+  if (booking.balanceDue <= 0) {
+    return res.status(400).json({ error: "There's no balance due on this booking" });
+  }
+
+  const [payment] = await prisma.$transaction([
+    prisma.payment.update({
+      where: { bookingId: booking.id },
+      data: { amountPaid: { increment: booking.balanceDue } },
+    }),
+    prisma.booking.update({ where: { id: booking.id }, data: { balanceDue: 0 } }),
+  ]);
+  res.json(payment);
+});
+
 module.exports = router;

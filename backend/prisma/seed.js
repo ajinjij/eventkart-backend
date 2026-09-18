@@ -20,10 +20,29 @@ async function main() {
     data: { name: "Platform Admin", email, password, role: "ADMIN" },
   });
 
+  // Default site settings, editable later from the admin dashboard.
+  const defaultSettings = {
+    accentColor: "#E8607C",
+    heroHeadline: "Plan the day. Skip the guesswork.",
+    heroSubtext: "Compare verified event coordinators and book securely — payment held in escrow until your event is delivered.",
+  };
+  for (const [key, value] of Object.entries(defaultSettings)) {
+    await prisma.setting.upsert({ where: { key }, update: {}, create: { key, value } });
+  }
+
+  // A sample coupon so there's something to test with right away.
+  const existingCoupon = await prisma.coupon.findUnique({ where: { code: "WELCOME10" } });
+  if (!existingCoupon) {
+    await prisma.coupon.create({
+      data: { code: "WELCOME10", type: "PERCENT", value: 10, minOrder: 1000 },
+    });
+  }
+
   console.log("Admin account created:");
   console.log("  email:    admin@eventkart.com");
   console.log("  password: admin123");
   console.log("Change this password before deploying anywhere real.");
+  console.log("Sample coupon created: WELCOME10 (10% off, min order ₹1,000)");
 }
 
 main()

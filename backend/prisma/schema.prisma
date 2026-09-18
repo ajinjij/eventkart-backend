@@ -48,6 +48,16 @@ enum PaymentStatus {
   REFUNDED
 }
 
+enum DiscountType {
+  PERCENT
+  FLAT
+}
+
+enum PaymentPlan {
+  FULL
+  SPLIT // 50% now, 50% before the event
+}
+
 model User {
   id            Int            @id @default(autoincrement())
   name          String
@@ -149,10 +159,14 @@ model Booking {
   status           BookingStatus @default(PENDING_PAYMENT)
   eventDate        DateTime?
   disputeReason    String?
+  couponCode       String?
+  discountAmount   Float         @default(0)
+  paymentPlan      PaymentPlan   @default(FULL)
+  balanceDue       Float         @default(0) // remaining amount owed, only nonzero for SPLIT plans until paid
   createdAt        DateTime      @default(now())
 
   payment          Payment?
-  review           Review?
+  review            Review?
 }
 
 model Payment {
@@ -165,12 +179,26 @@ model Payment {
   releasedAt  DateTime?
 }
 
+model Coupon {
+  id         Int          @id @default(autoincrement())
+  code       String       @unique
+  type       DiscountType
+  value      Float        // percent (e.g. 10 = 10%) or flat rupee amount, depending on type
+  minOrder   Float?       // minimum cart subtotal required to use this coupon
+  maxUses    Int?         // total redemptions allowed across all customers, null = unlimited
+  usedCount  Int          @default(0)
+  expiresAt  DateTime?
+  active     Boolean      @default(true)
+  createdAt  DateTime     @default(now())
+}
+
 model Cart {
-  id         Int        @id @default(autoincrement())
-  customerId Int        @unique
-  customer   User       @relation(fields: [customerId], references: [id])
-  items      CartItem[]
-  createdAt  DateTime   @default(now())
+  id                Int        @id @default(autoincrement())
+  customerId        Int        @unique
+  customer          User       @relation(fields: [customerId], references: [id])
+  items             CartItem[]
+  appliedCouponCode String?
+  createdAt         DateTime   @default(now())
 }
 
 model CartItem {
@@ -195,6 +223,11 @@ model WishlistItem {
   createdAt  DateTime @default(now())
 
   @@unique([customerId, packageId])
+}
+
+model Setting {
+  key   String @id
+  value String // stored as plain text or JSON-encoded, parsed by the frontend as needed
 }
 
 model Review {
