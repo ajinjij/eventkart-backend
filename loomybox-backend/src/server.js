@@ -14,6 +14,7 @@ const cartRoutes = require("./routes/cart.routes");
 const packageRoutes = require("./routes/package.routes");
 const wishlistRoutes = require("./routes/wishlist.routes");
 const settingsRoutes = require("./routes/settings.routes");
+const assistantRoutes = require("./routes/assistant.routes");
 
 const app = express();
 
@@ -34,6 +35,7 @@ app.use("/api/cart", cartRoutes);
 app.use("/api/packages", packageRoutes);
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/assistant", assistantRoutes);
 
 // Fallback error handler so unexpected failures return JSON, not an HTML stack trace.
 app.use((err, req, res, next) => {

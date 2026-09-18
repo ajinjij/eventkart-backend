@@ -29,6 +29,16 @@ Run `npx prisma studio` any time to browse/edit the database in a GUI.
 | Customer bookings dashboard | `GET /api/bookings/mine`, `POST /api/reviews` |
 | Vendor dashboard | `GET /api/requirements/open`, `POST /api/quotes`, `GET /api/bookings/mine`, `POST /api/bookings/:id/complete` |
 | Admin panel | `GET /api/admin/stats`, `GET /api/admin/vendors/pending`, `POST /api/admin/vendors/:id/approve`, `GET /api/admin/bookings/disputed` |
+| "Plan my event" AI assistant | `POST /api/assistant/plan` |
+
+## "Plan my event" AI assistant
+
+`POST /api/assistant/plan` takes `{ eventType, city, guestCount, budgetMin, budgetMax, servicesNeeded, notes }` and:
+1. Calls the Anthropic API to generate a service checklist (which categories this event needs, why, and a suggested % budget split) plus a couple of sentences of planning advice.
+2. Cross-references each suggested category against real approved packages in your DB (matching city/budget), so the customer sees actual bookable options next to the AI's advice.
+3. Returns a `needsCustomQuote` array — categories the AI suggested but where no ready-made package matched. The frontend uses this to offer posting a custom `Requirement` for those specific categories instead, feeding into the existing quote flow.
+
+Requires `ANTHROPIC_API_KEY` in `.env` (get one at console.anthropic.com). Optional `ANTHROPIC_MODEL` to pin a specific model — check docs.claude.com for the current recommended string. If the key is missing or the API call fails, the route returns a 502 with a friendly error rather than crashing.
 
 ## Full booking lifecycle (how the pieces connect)
 
