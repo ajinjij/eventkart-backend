@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { notify } = require("../lib/notifications");
 
 const router = express.Router();
 const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.12);
@@ -31,6 +32,19 @@ router.post("/", requireAuth, requireRole("VENDOR"), async (req, res) => {
       message,
     },
   });
+
+  // Track response time for the "usually replies within X" trust signal on this vendor's cards.
+  const responseMinutes = (quote.createdAt.getTime() - requirement.createdAt.getTime()) / 60000;
+  await prisma.vendorProfile.update({
+    where: { id: vendor.id },
+    data: {
+      respondedQuoteCount: { increment: 1 },
+      totalResponseMinutes: { increment: Math.max(0, responseMinutes) },
+    },
+  });
+
+  await notify(requirement.customerId, "QUOTE_RECEIVED", `${vendor.businessName} sent you a quote of ₹${Number(price).toLocaleString("en-IN")}`, "bookings.html");
+
   res.status(201).json(quote);
 });
 
@@ -40,7 +54,7 @@ router.post("/", requireAuth, requireRole("VENDOR"), async (req, res) => {
 router.post("/:id/accept", requireAuth, requireRole("CUSTOMER"), async (req, res) => {
   const quote = await prisma.quote.findUnique({
     where: { id: Number(req.params.id) },
-    include: { requirement: true },
+    include: { requirement: true, vendor: true },
   });
   if (!quote) return res.status(404).json({ error: "Quote not found" });
   if (quote.requirement.customerId !== req.user.id) {
@@ -72,6 +86,8 @@ router.post("/:id/accept", requireAuth, requireRole("CUSTOMER"), async (req, res
     }),
     prisma.requirement.update({ where: { id: quote.requirementId }, data: { status: "BOOKED" } }),
   ]);
+
+  await notify(quote.vendor.userId, "QUOTE_ACCEPTED", `Your quote was accepted — awaiting the customer's payment`, "vendor-dashboard.html");
 
   res.status(201).json(booking);
 });

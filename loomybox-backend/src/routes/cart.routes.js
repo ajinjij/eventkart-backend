@@ -2,6 +2,7 @@ const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
 const { validateCoupon } = require("../lib/coupon");
+const { notify } = require("../lib/notifications");
 
 const router = express.Router();
 const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.12);
@@ -188,6 +189,11 @@ router.post("/checkout", async (req, res) => {
     // Empty the cart now that everything in it has become a real booking.
     await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
   });
+
+  // Notify each vendor involved that they have a new confirmed booking.
+  const vendorIds = [...new Set(createdBookings.map((b) => b.vendorId))];
+  const vendors = await prisma.vendorProfile.findMany({ where: { id: { in: vendorIds } } });
+  await Promise.all(vendors.map((v) => notify(v.userId, "BOOKING_CONFIRMED", "You have a new confirmed booking — funds are held in escrow.", "vendor-dashboard.html")));
 
   res.status(201).json({
     message: `${createdBookings.length} booking(s) confirmed`,

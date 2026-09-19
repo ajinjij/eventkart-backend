@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { notify } = require("../lib/notifications");
 
 const router = express.Router();
 
@@ -56,6 +57,14 @@ router.post("/:id/complete", requireAuth, requireRole("VENDOR"), async (req, res
     where: { id: booking.id },
     data: { status: "COMPLETED" },
   });
+
+  await prisma.vendorProfile.update({
+    where: { id: vendor.id },
+    data: { completedBookingsCount: { increment: 1 } },
+  });
+
+  await notify(booking.customerId, "REVIEW_REQUEST", "How did it go? Leave a review for your event.", "bookings.html");
+
   res.json(updated);
 });
 
@@ -72,6 +81,10 @@ router.post("/:id/dispute", requireAuth, async (req, res) => {
     where: { id: booking.id },
     data: { status: "DISPUTED", disputeReason: reason },
   });
+
+  const admins = await prisma.user.findMany({ where: { role: "ADMIN" } });
+  await Promise.all(admins.map((a) => notify(a.id, "DISPUTE_FILED", `Booking #${booking.id} was disputed: ${reason}`, "admin.html")));
+
   res.json(updated);
 });
 

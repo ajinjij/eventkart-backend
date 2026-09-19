@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { notify } = require("../lib/notifications");
 
 const router = express.Router();
 
@@ -30,6 +31,9 @@ router.post("/:bookingId/pay", requireAuth, requireRole("CUSTOMER"), async (req,
     }),
     prisma.booking.update({ where: { id: booking.id }, data: { status: "CONFIRMED" } }),
   ]);
+
+  const vendor = await prisma.vendorProfile.findUnique({ where: { id: booking.vendorId } });
+  if (vendor) await notify(vendor.userId, "BOOKING_CONFIRMED", `A booking (#${booking.id}) is confirmed and paid — funds are held in escrow.`, "vendor-dashboard.html");
 
   res.status(201).json(payment);
 });

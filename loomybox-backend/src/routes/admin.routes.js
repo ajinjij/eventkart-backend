@@ -1,6 +1,7 @@
 const express = require("express");
 const prisma = require("../lib/prisma");
 const { requireAuth, requireRole } = require("../middleware/auth");
+const { notify } = require("../lib/notifications");
 
 const router = express.Router();
 
@@ -22,6 +23,7 @@ router.post("/vendors/:id/approve", async (req, res) => {
     where: { id: Number(req.params.id) },
     data: { status: "APPROVED" },
   });
+  await notify(vendor.userId, "VENDOR_APPROVED", "Your vendor account has been approved — you can now list packages and send quotes.", "vendor-dashboard.html");
   res.json(vendor);
 });
 
@@ -138,6 +140,69 @@ router.put("/settings", async (req, res) => {
   const settings = {};
   for (const row of rows) settings[row.key] = row.value;
   res.json(settings);
+});
+
+// GET /api/admin/flags
+// Lightweight, rules-based quality/fraud signals for admin review — not ML,
+// just heuristics worth a human look. Cheap to run; expand the rules here as
+// patterns emerge.
+router.get("/flags", async (req, res) => {
+  const flags = [];
+
+  // Vendors with repeated disputes.
+  const disputedBookings = await prisma.booking.findMany({
+    where: { status: "DISPUTED" },
+    select: { vendorId: true },
+  });
+  const disputeCounts = {};
+  for (const b of disputedBookings) disputeCounts[b.vendorId] = (disputeCounts[b.vendorId] || 0) + 1;
+  const flaggedVendorIds = Object.entries(disputeCounts).filter(([, count]) => count >= 2).map(([id]) => Number(id));
+  if (flaggedVendorIds.length) {
+    const vendors = await prisma.vendorProfile.findMany({ where: { id: { in: flaggedVendorIds } } });
+    for (const v of vendors) {
+      flags.push({
+        type: "REPEAT_DISPUTES",
+        vendorId: v.id,
+        vendorName: v.businessName,
+        detail: `${disputeCounts[v.id]} disputed bookings`,
+      });
+    }
+  }
+
+  // Packages priced far above the median for their category (possible pricing error or scam listing).
+  const packages = await prisma.package.findMany({ include: { vendor: true } });
+  const byCategory = {};
+  for (const p of packages) {
+    if (!byCategory[p.vendor.category]) byCategory[p.vendor.category] = [];
+    byCategory[p.vendor.category].push(p.price);
+  }
+  for (const p of packages) {
+    const prices = [...byCategory[p.vendor.category]].sort((a, b) => a - b);
+    const median = prices[Math.floor(prices.length / 2)];
+    if (median > 0 && p.price > median * 3 && prices.length >= 4) {
+      flags.push({
+        type: "PRICE_OUTLIER",
+        packageId: p.id,
+        packageName: p.name,
+        vendorName: p.vendor.businessName,
+        detail: `₹${p.price.toLocaleString("en-IN")} vs. category median ₹${median.toLocaleString("en-IN")}`,
+      });
+    }
+  }
+
+  // Vendors approved but with zero packages listed after a while (possible dead/abandoned account).
+  const staleVendors = await prisma.vendorProfile.findMany({
+    where: {
+      status: "APPROVED",
+      packages: { none: {} },
+      createdAt: { lt: new Date(Date.now() - 14 * 86400000) },
+    },
+  });
+  for (const v of staleVendors) {
+    flags.push({ type: "INACTIVE_VENDOR", vendorId: v.id, vendorName: v.businessName, detail: "Approved 14+ days ago, no packages listed yet" });
+  }
+
+  res.json(flags);
 });
 
 module.exports = router;

@@ -58,6 +58,18 @@ enum PaymentPlan {
   SPLIT // 50% now, 50% before the event
 }
 
+enum NotificationType {
+  QUOTE_RECEIVED
+  QUOTE_ACCEPTED
+  BOOKING_CONFIRMED
+  PAYMENT_REMINDER
+  EVENT_REMINDER
+  REVIEW_REQUEST
+  DISPUTE_FILED
+  MESSAGE_RECEIVED
+  VENDOR_APPROVED
+}
+
 model User {
   id            Int            @id @default(autoincrement())
   name          String
@@ -73,6 +85,9 @@ model User {
   reviews       Review[]
   cart          Cart?
   wishlist      WishlistItem[]
+  notifications Notification[]
+  sentMessages  Message[]      @relation("SentMessages")
+  conversations Conversation[] @relation("CustomerConversations")
 }
 
 model VendorProfile {
@@ -90,9 +105,18 @@ model VendorProfile {
   reviewCount   Int            @default(0)
   createdAt     DateTime       @default(now())
 
+  // Trust signals: response time is computed from how quickly a vendor sends
+  // a quote after a requirement is posted. completedBookingsCount is
+  // incremented whenever one of this vendor's bookings reaches COMPLETED.
+  respondedQuoteCount    Int   @default(0)
+  totalResponseMinutes   Float @default(0) // sum of (quote.createdAt - requirement.createdAt) in minutes, divide by respondedQuoteCount for the average shown on the vendor card
+  completedBookingsCount Int   @default(0)
+
   packages      Package[]
   quotes        Quote[]
   bookings      Booking[]
+  blockedDates  BlockedDate[]
+  conversations Conversation[]
 }
 
 model Package {
@@ -109,6 +133,59 @@ model Package {
   cartItems     CartItem[]
   bookings      Booking[]
   wishlistedBy  WishlistItem[]
+  images        PackageImage[]
+}
+
+model PackageImage {
+  id        Int     @id @default(autoincrement())
+  packageId Int
+  package   Package @relation(fields: [packageId], references: [id])
+  imageUrl  String  // data URL (base64) for local dev, or a hosted image URL in production
+  position  Int     @default(0) // display order in the gallery
+}
+
+model BlockedDate {
+  id       Int           @id @default(autoincrement())
+  vendorId Int
+  vendor   VendorProfile @relation(fields: [vendorId], references: [id])
+  date     DateTime      // the calendar day this vendor is unavailable
+  reason   String?       // optional note, e.g. "already booked"
+
+  @@unique([vendorId, date])
+}
+
+model Conversation {
+  id         Int       @id @default(autoincrement())
+  customerId Int
+  customer   User      @relation("CustomerConversations", fields: [customerId], references: [id])
+  vendorId   Int
+  vendor     VendorProfile @relation(fields: [vendorId], references: [id])
+  createdAt  DateTime  @default(now())
+  messages   Message[]
+
+  @@unique([customerId, vendorId])
+}
+
+model Message {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  senderId       Int
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  content        String
+  read           Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  user      User             @relation(fields: [userId], references: [id])
+  type      NotificationType
+  message   String
+  link      String?          // relative frontend path to send them to when clicked, e.g. "bookings.html"
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
 }
 
 model Requirement {

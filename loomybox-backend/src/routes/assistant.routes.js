@@ -132,4 +132,54 @@ router.post("/plan", async (req, res) => {
   });
 });
 
+// POST /api/assistant/support
+// Public. Body: { message, history? }. A lightweight support chatbot that
+// answers common questions about how Loomybox works (escrow, refunds,
+// booking flow) from a fixed policy brief — it does NOT have access to any
+// individual customer's private booking data, so it never invents specifics
+// about "your" booking; it points those questions to My Orders / My requirements instead.
+router.post("/support", async (req, res) => {
+  const { message, history } = req.body;
+  if (!message || !message.trim()) return res.status(400).json({ error: "message is required" });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return res.status(502).json({ error: "Support chat is unavailable right now." });
+  }
+
+  const systemPrompt = `You are the Loomybox.com support assistant. Loomybox is an event-vendor marketplace connecting customers with vendors (photography, catering, decor, venues, etc.).
+How the platform works:
+- Customers browse ready-made packages and buy directly (cart → checkout), or post a "requirement" describing their event and get custom quotes from vendors, then accept one.
+- Payment is held in escrow: marked HELD when paid, RELEASED to the vendor after the vendor marks the booking COMPLETED (or by admin resolving a dispute), or REFUNDED if a dispute resolves in the customer's favor.
+- Bookings can be paid FULL upfront or SPLIT (50% now, 50% before the event).
+- If something goes wrong, either party can file a dispute on the booking, which pauses the escrow release until admin reviews it.
+- Vendors must be approved by an admin before they can list packages or send quotes.
+Answer briefly and helpfully. If asked about a SPECIFIC booking/order/refund status, you don't have access to individual records — tell them to check "My Orders" (customer) or the vendor dashboard, and that they can also file a dispute from a booking if something's wrong. Never invent order details, dates, or amounts.`;
+
+  const messages = [
+    ...(Array.isArray(history) ? history.slice(-6).map((h) => ({ role: h.role === "assistant" ? "assistant" : "user", content: String(h.content).slice(0, 1000) })) : []),
+    { role: "user", content: message.trim().slice(0, 1000) },
+  ];
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-5",
+        max_tokens: 400,
+        system: systemPrompt,
+        messages,
+      }),
+    });
+    if (!response.ok) throw new Error(`Anthropic API ${response.status}`);
+    const data = await response.json();
+    const reply = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    res.json({ reply });
+  } catch (err) {
+    console.error("Support chat failed:", err.message);
+    res.status(502).json({ error: "Support chat is unavailable right now — please try again shortly." });
+  }
+});
+
 module.exports = router;
